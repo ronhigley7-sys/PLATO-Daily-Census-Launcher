@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PLATO Daily Census Launcher</title>
+  <style>
+    :root{--navy:#062b49;--gold:#d6a928;--blue:#0b5c8e;--bg:#f4f7fa;--red:#b42318;--green:#157347}
+    *{box-sizing:border-box} body{margin:0;font:16px Arial,sans-serif;background:var(--bg);color:#17202a}
+    header{padding:24px 20px;background:var(--navy);color:#fff;border-bottom:7px solid var(--gold)}
+    header h1{margin:0 0 5px;font-size:clamp(25px,4vw,38px)} header p{margin:0;opacity:.9}
+    main{max-width:1050px;margin:24px auto;padding:0 18px 40px}.panel{background:#fff;border:1px solid #d5dfe7;border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:0 3px 10px #062b4910}
+    h2{margin:0 0 12px;color:var(--navy)} .notice{background:#fff7d6;border-left:5px solid var(--gold);padding:12px 14px;border-radius:6px;margin-bottom:16px}
+    .upload{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.button,button{border:0;border-radius:8px;background:var(--blue);color:#fff;padding:12px 16px;font-weight:700;cursor:pointer}.button input{display:none}
+    button.secondary{background:#5b6770}button.danger{background:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}.status{margin-top:12px;color:#44515c}.error{color:var(--red);font-weight:700}
+    .filters{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0}.filters label{font-weight:700}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:920px}th,td{border-bottom:1px solid #dce4ea;padding:8px;text-align:left}th{background:#edf3f7;color:var(--navy);position:sticky;top:0}td input{width:100%;padding:7px;border:1px solid #b9c6cf;border-radius:5px}td input[type=checkbox]{width:auto;transform:scale(1.2)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}.patient{display:block;background:white;border:2px solid #d8e1e8;border-radius:12px;padding:17px;text-decoration:none;color:inherit}.patient:hover{border-color:var(--gold)}.top{display:flex;justify-content:space-between;gap:10px}.initials{font-size:25px;font-weight:800;color:var(--navy)}.room{background:var(--navy);color:#fff;padding:5px 9px;border-radius:999px;font-weight:700}.reason{margin:10px 0;color:var(--red);font-weight:700}.small{font-size:13px;color:#5b6770;line-height:1.4}.hidden{display:none}footer{text-align:center;color:#5b6770;font-size:13px}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+<header><h1>PLATO Daily Census Launcher</h1><p>Upload, review, then open prefilled bedside-rounding forms</p></header>
+<main>
+  <section class="panel">
+    <h2>1. Upload daily census</h2>
+    <div class="notice"><strong>Privacy:</strong> Select a file from your approved work OneDrive folder. Processing occurs in this browser. The census is not sent to GitHub or saved by this launcher.</div>
+    <div class="upload">
+      <label class="button">Upload Excel or CSV<input id="sheetFile" type="file" accept=".xlsx,.xls,.csv,.tsv"></label>
+      <label class="button">Upload census image<input id="imageFile" type="file" accept="image/*"></label>
+      <button id="clear" class="secondary" type="button">Clear patient data</button>
+    </div>
+    <div id="status" class="status">No census loaded.</div>
+  </section>
+
+  <section id="reviewPanel" class="panel hidden">
+    <h2>2. Review imported patients</h2>
+    <p class="small">Confirm every value against the source census. Image recognition can make mistakes. Check “Foley” and “Central line” only when active/current.</p>
+    <div class="filters">
+      <label><input id="fBraden" type="checkbox" checked> Braden &lt; 17</label>
+      <label><input id="fFoley" type="checkbox" checked> Foley</label>
+      <label><input id="fCentral" type="checkbox" checked> Active central line</label>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Include</th><th>Initials</th><th>Room</th><th>MRN</th><th>RN</th><th>CA/PCT</th><th>Braden</th><th>Foley</th><th>Central line</th></tr></thead><tbody id="reviewBody"></tbody></table></div>
+    <p><button id="build" type="button">Create patient forms</button> <button id="add" class="secondary" type="button">Add blank row</button></p>
+  </section>
+
+  <section id="formsPanel" class="panel hidden"><h2>3. Patient forms ready</h2><div id="patients" class="grid"></div></section>
+  <footer>Contains patient identifiers only after a local census is selected. Close the page or choose “Clear patient data” when rounds are complete.</footer>
+</main>
+<script>
+const FORM='https://app.smartsheet.com/b/form/228c3e5fe43c446f8b2d878124c46310';
+let rows=[];
+const $=id=>document.getElementById(id), clean=v=>String(v??'').trim();
+const key=s=>clean(s).toLowerCase().replace(/[^a-z0-9]+/g,' ');
+const findValue=(obj,patterns)=>{for(const [k,v] of Object.entries(obj)){if(patterns.some(p=>p.test(key(k))))return clean(v)}return ''};
+const yes=v=>/^(y|yes|true|1|present|active|current|in place)$/i.test(clean(v))||/foley|urinary catheter|central line|picc|cvc|port|dialysis catheter/i.test(clean(v));
+function initials(name){const parts=clean(name).replace(/[^A-Za-z ,'-]/g,'').split(/[,\s-]+/).filter(Boolean);return parts.map(x=>x[0]).join('').toUpperCase().slice(0,4)}
+function normalize(obj){
+  const name=findValue(obj,[/^patient$/,/patient name/,/^name$/]);
+  return {include:true,initials:findValue(obj,[/initial/])||initials(name),room:findValue(obj,[/room/,/location/,/bed/]),mrn:findValue(obj,[/^mrn/,/medical record/]),rn:findValue(obj,[/^rn$/,/registered nurse/,/nurse assigned/]),ca:findValue(obj,[/^tech$/,/^ca$/,/pct/,/care assistant/,/nursing assistant/]),braden:findValue(obj,[/braden/]),foley:yes(findValue(obj,[/foley/,/urinary catheter/])),central:yes(findValue(obj,[/active central/,/central line/,/^cvc/,/picc/,/dialysis catheter/,/port/]))};
+function qualifies(r){const b=Number(r.braden),br=$('fBraden').checked&&Number.isFinite(b)&&b<17,fo=$('fFoley').checked&&r.foley,cl=$('fCentral').checked&&r.central;return br||fo||cl}
+function esc(s){return clean(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function renderReview(){
+  $('reviewPanel').classList.remove('hidden');$('formsPanel').classList.add('hidden');
+  $('reviewBody').innerHTML=rows.map((r,i)=>`<tr data-i="${i}"><td><input data-f="include" type="checkbox" ${r.include?'checked':''}></td>${['initials','room','mrn','rn','ca','braden'].map(f=>`<td><input data-f="${f}" value="${esc(r[f])}"></td>`).join('')}<td><input data-f="foley" type="checkbox" ${r.foley?'checked':''}></td><td><input data-f="central" type="checkbox" ${r.central?'checked':''}></td></tr>`).join('');
+}
+function sync(){document.querySelectorAll('#reviewBody tr').forEach(tr=>{const r=rows[+tr.dataset.i];tr.querySelectorAll('input').forEach(x=>r[x.dataset.f]=x.type==='checkbox'?x.checked:x.value)})}
+function fields(r){const rounds=[];if(Number(r.braden)<17)rounds.push('HAPI');if(r.foley)rounds.push('CAUTI');if(r.central)rounds.push('CLABSI');return [['Date of Rounding',new Date().toISOString().slice(0,10)],['Unit (AH)','3B/3C'],['3B/3C (AH)',r.room],['Patient Initials',r.initials],['Nurse assigned to patient',r.rn],['CA / PCT / EMA Assigned to Patient',r.ca],...rounds.map(x=>['Choose Any/All Additional PLATO Rounds',x]),['MRN Number',r.mrn]]}
+function link(r){return FORM+'?'+fields(r).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&')}
+function build(){sync();const selected=rows.filter(r=>r.include&&qualifies(r));$('patients').innerHTML=selected.map(r=>{const reasons=[Number(r.braden)<17&&`Braden ${esc(r.braden)}`,r.foley&&'Foley',r.central&&'Active central line'].filter(Boolean).join(' • ');return `<a class="patient" target="_blank" rel="noopener" href="${link(r)}"><div class="top"><span class="initials">${esc(r.initials)||'—'}</span><span class="room">${esc(r.room)||'Room —'}</span></div><div class="reason">${reasons}</div><div class="small">RN: ${esc(r.rn)||'—'}<br>CA/PCT: ${esc(r.ca)||'—'}</div><strong>Open prefilled form →</strong></a>`}).join('')||'<p class="error">No reviewed patients meet the selected criteria.</p>';$('formsPanel').classList.remove('hidden');$('formsPanel').scrollIntoView({behavior:'smooth'})}
+function clearAll(){rows=[];$('sheetFile').value='';$('imageFile').value='';$('reviewPanel').classList.add('hidden');$('formsPanel').classList.add('hidden');$('reviewBody').innerHTML='';$('patients').innerHTML='';$('status').textContent='No census loaded.'}
+$('sheetFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{if(!window.XLSX)throw Error('Spreadsheet reader could not load. Check the work network connection.');const data=await f.arrayBuffer(),wb=XLSX.read(data),json=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});rows=json.map(normalize).filter(r=>Object.values(r).some(Boolean));$('status').textContent=`Loaded ${rows.length} row(s) from ${f.name}. Review before creating forms.`;renderReview()}catch(err){$('status').innerHTML=`<span class="error">Could not read file: ${esc(err.message)}</span>`}});
+$('imageFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{if(!window.Tesseract)throw Error('Image reader could not load. Check the work network connection.');$('status').textContent='Reading image locally…';const out=await Tesseract.recognize(f,'eng',{logger:m=>{if(m.progress)$('status').textContent=`Reading image locally… ${Math.round(m.progress*100)}%`}});rows=out.data.text.split(/\n+/).filter(x=>x.trim()).map(line=>normalize({Patient:line}));$('status').textContent=`Image text extracted into ${rows.length} review row(s). Correct and combine rows as needed; do not create forms until every value is verified.`;renderReview()}catch(err){$('status').innerHTML=`<span class="error">Could not read image: ${esc(err.message)}</span>`}});
+$('add').onclick=()=>{sync();rows.push({include:true,initials:'',room:'',mrn:'',rn:'',ca:'',braden:'',foley:false,central:false});renderReview()};$('build').onclick=build;$('clear').onclick=clearAll;
+</script>
+</body></html>

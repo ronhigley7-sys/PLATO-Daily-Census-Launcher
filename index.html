@@ -62,6 +62,7 @@ function initials(name){const parts=clean(name).replace(/[^A-Za-z ,'-]/g,'').spl
 function normalize(obj){
   const name=findValue(obj,[/^patient$/,/patient name/,/^name$/]);
   return {include:true,initials:findValue(obj,[/initial/])||initials(name),room:findValue(obj,[/room/,/location/,/bed/]),mrn:findValue(obj,[/^mrn/,/medical record/]),rn:findValue(obj,[/^rn$/,/registered nurse/,/nurse assigned/]),ca:findValue(obj,[/^tech$/,/^ca$/,/pct/,/care assistant/,/nursing assistant/]),braden:findValue(obj,[/braden/]),foley:yes(findValue(obj,[/foley/,/urinary catheter/])),central:yes(findValue(obj,[/active central/,/central line/,/^cvc/,/picc/,/dialysis catheter/,/port/]))};
+}
 function qualifies(r){const b=Number(r.braden),br=$('fBraden').checked&&Number.isFinite(b)&&b<17,fo=$('fFoley').checked&&r.foley,cl=$('fCentral').checked&&r.central;return br||fo||cl}
 function esc(s){return clean(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function renderReview(){
